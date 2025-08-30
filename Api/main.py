@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db, create_db_and_tables
 from models import PullRequest, File, PRStatus
+from webhooks import webhook_handler
 from typing import List
+import json
 
 app = FastAPI(
     title="PR Review AI Agent",
@@ -57,6 +59,34 @@ async def get_pr_files(pr_id: int, db: Session = Depends(get_db)):
     """Get all files for a specific pull request"""
     files = db.query(File).filter(File.pull_request_id == pr_id).all()
     return files
+
+# GitHub Webhook Endpoint
+@app.post("/webhooks/github")
+async def github_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle GitHub webhook events"""
+    try:
+        # Read the request body
+        payload_bytes = await request.body()
+        payload = json.loads(payload_bytes)
+        
+        # Verify webhook signature
+        if not webhook_handler.verify_signature(request, payload_bytes):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Check if this is a pull request event
+        event_type = request.headers.get("X-GitHub-Event")
+        if event_type != "pull_request":
+            return {"message": f"Event type '{event_type}' not handled", "status": "ignored"}
+        
+        # Handle the pull request event
+        result = await webhook_handler.handle_pull_request_event(payload, db)
+        
+        return result
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

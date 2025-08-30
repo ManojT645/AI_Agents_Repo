@@ -55,6 +55,9 @@ python3 main.py
 - `POST /prs` - Create a new pull request
 - `GET /prs/{pr_id}/files` - Get all files for a specific pull request
 
+### Webhook Endpoints
+- `POST /webhooks/github` - GitHub webhook endpoint for pull request events
+
 ## Database Schema
 
 ### Pull Requests Table
@@ -108,3 +111,71 @@ curl -X POST http://localhost:8000/prs \
     "pr_number": 124
   }'
 ```
+
+## GitHub Webhook Configuration
+
+### Setting up GitHub Webhook
+
+1. **Configure Webhook Secret** (optional but recommended):
+   ```bash
+   export GITHUB_WEBHOOK_SECRET="your_secret_token_here"
+   ```
+
+2. **Add Webhook to GitHub Repository**:
+   - Go to your GitHub repository
+   - Navigate to Settings → Webhooks
+   - Click "Add webhook"
+   - Set Payload URL: `http://your-domain.com/webhooks/github`
+   - Set Content type: `application/json`
+   - Select events: `Pull requests`
+   - Set Secret: `your_secret_token_here`
+   - Click "Add webhook"
+
+### Testing Webhooks
+
+#### Using the Test Script
+Run the test script to simulate GitHub webhook events:
+```bash
+python3 test_webhook.py
+```
+
+#### Manual Testing
+You can also test the webhook manually using curl:
+
+```bash
+# Test PR opened event
+curl -X POST http://localhost:8000/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "id": 123,
+      "number": 123,
+      "title": "Test PR",
+      "body": "Test description",
+      "state": "open",
+      "html_url": "https://github.com/test/repo/pull/123",
+      "created_at": "2025-08-26T17:30:00Z",
+      "updated_at": "2025-08-26T17:30:00Z",
+      "user": {"login": "testuser"}
+    },
+    "repository": {"full_name": "test/repo"}
+  }'
+```
+
+### Supported Events
+
+The webhook handles the following pull request events:
+- `opened` - New pull request created
+- `synchronize` - New commits pushed to PR
+- `reopened` - PR reopened after being closed
+- `closed` - PR closed (merged or closed without merging)
+
+### Webhook Features
+
+- **Automatic PR Creation/Updates**: Creates new PRs or updates existing ones based on GitHub events
+- **File Tracking**: Tracks file changes for each PR (placeholder implementation)
+- **Signature Verification**: Optional webhook signature verification for security
+- **Error Handling**: Proper error handling for invalid payloads and signatures
+- **Database Integration**: Seamlessly integrates with PostgreSQL database
