@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, Request, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from database import get_db, create_db_and_tables
 from models import PullRequest, File, PRStatus
 from webhooks import webhook_handler
@@ -27,19 +28,19 @@ async def database_connection_test(db: Session = Depends(get_db)):
     """Test database connection and basic operations"""
     try:
         # Test 1: Basic connection
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         
         # Test 2: Check if tables exist
-        result = db.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
+        result = db.execute(text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'"))
         table_count = result.scalar()
         
         # Test 3: Check if our specific tables exist
-        pr_table_exists = db.execute("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'pull_requests')").scalar()
-        files_table_exists = db.execute("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'files')").scalar()
+        pr_table_exists = db.execute(text("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'pull_requests')")).scalar()
+        files_table_exists = db.execute(text("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'files')")).scalar()
         
         # Test 4: Try to count records (should work even if tables are empty)
-        pr_count = db.execute("SELECT COUNT(*) FROM pull_requests").scalar() if pr_table_exists else 0
-        files_count = db.execute("SELECT COUNT(*) FROM files").scalar() if files_table_exists else 0
+        pr_count = db.execute(text("SELECT COUNT(*) FROM pull_requests")).scalar() if pr_table_exists else 0
+        files_count = db.execute(text("SELECT COUNT(*) FROM files")).scalar() if files_table_exists else 0
         
         return {
             "status": "success",
