@@ -77,12 +77,16 @@ async def root():
 @app.get("/prs", response_model=List[PullRequest])
 async def get_pull_requests(db: Session = Depends(get_db)):
     """Get all pull requests"""
-    return db.query(PullRequest).all()
+    from sqlalchemy import select
+    stmt = select(PullRequest)
+    return db.exec(stmt).all()
 
 @app.get("/prs/{pr_id}", response_model=PullRequest)
 async def get_pull_request(pr_id: int, db: Session = Depends(get_db)):
     """Get a specific pull request by ID"""
-    pr = db.query(PullRequest).filter(PullRequest.id == pr_id).first()
+    from sqlalchemy import select
+    stmt = select(PullRequest).where(PullRequest.id == pr_id)
+    pr = db.exec(stmt).first()
     if not pr:
         return {"error": "Pull request not found"}
     return pr
@@ -98,7 +102,9 @@ async def create_pull_request(pr: PullRequest, db: Session = Depends(get_db)):
 @app.get("/prs/{pr_id}/files", response_model=List[File])
 async def get_pr_files(pr_id: int, db: Session = Depends(get_db)):
     """Get all files for a specific pull request"""
-    files = db.query(File).filter(File.pull_request_id == pr_id).all()
+    from sqlalchemy import select
+    stmt = select(File).where(File.pull_request_id == pr_id)
+    files = db.exec(stmt).all()
     return files
 
 # GitHub Webhook Endpoint

@@ -2,7 +2,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 from models import PullRequest, File, PRStatus
 from database import get_db
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import hmac
 import hashlib
@@ -75,18 +75,20 @@ class GitHubWebhookHandler:
         
         pr_data = self.parse_pull_request_data(payload)
         
-        # Check if PR already exists
-        existing_pr = db.query(PullRequest).filter(
+        # Check if PR already exists using newer SQLAlchemy 2.0+ syntax
+        from sqlalchemy import select
+        stmt = select(PullRequest).where(
             PullRequest.pr_number == pr_data["pr_number"],
             PullRequest.repository == pr_data["repository"]
-        ).first()
+        )
+        existing_pr = db.exec(stmt).first()
         
         if existing_pr:
             # Update existing PR
             for key, value in pr_data.items():
                 if hasattr(existing_pr, key) and key not in ["id", "pr_number", "repository"]:
                     setattr(existing_pr, key, value)
-            existing_pr.updated_at = datetime.utcnow()
+            existing_pr.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(existing_pr)
             
@@ -109,7 +111,10 @@ class GitHubWebhookHandler:
             if not existing_pr or action == "synchronize":
                 # Remove existing files for this PR if synchronizing
                 if existing_pr:
-                    db.query(File).filter(File.pull_request_id == pr_id).delete()
+                    delete_stmt = select(File).where(File.pull_request_id == pr_id)
+                    existing_files = db.exec(delete_stmt).all()
+                    for file in existing_files:
+                        db.delete(file)
                 
                 # Create a placeholder file entry
                 placeholder_file = File(

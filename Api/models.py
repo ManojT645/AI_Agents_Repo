@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 class PRStatus(str, Enum):
@@ -21,8 +21,8 @@ class PullRequest(SQLModel, table=True):
     pr_number: int = Field(unique=True)
     github_id: Optional[int] = Field(default=None)
     html_url: Optional[str] = Field(default=None, max_length=500)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationship to files
     files: List["File"] = Relationship(back_populates="pull_request")
@@ -39,7 +39,7 @@ class File(SQLModel, table=True):
     deletions: int = Field(default=0)
     changes: int = Field(default=0)
     pull_request_id: int = Field(foreign_key="pull_requests.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationship to pull request
     pull_request: Optional[PullRequest] = Relationship(back_populates="files")
