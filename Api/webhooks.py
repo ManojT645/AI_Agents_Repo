@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import os
 from typing import Dict, Any, List
+import traceback
 
 class GitHubWebhookHandler:
     """Handler for GitHub webhook events"""
@@ -29,27 +30,64 @@ class GitHubWebhookHandler:
     
     def parse_pull_request_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Parse pull request data from GitHub webhook payload"""
-        pr_data = payload.get("pull_request", {})
-        
-        # Map GitHub status to our enum
-        status_mapping = {
-            "open": PRStatus.OPEN,
-            "closed": PRStatus.CLOSED,
-            "merged": PRStatus.MERGED
-        }
-        
-        return {
-            "title": pr_data.get("title", ""),
-            "description": pr_data.get("body", ""),
-            "status": status_mapping.get(pr_data.get("state", "open"), PRStatus.OPEN),
-            "author": pr_data.get("user", {}).get("login", ""),
-            "repository": payload.get("repository", {}).get("full_name", ""),
-            "pr_number": pr_data.get("number", 0),
-            "github_id": pr_data.get("id"),
-            "html_url": pr_data.get("html_url", ""),
-            "created_at": datetime.fromisoformat(pr_data.get("created_at", "").replace("Z", "+00:00")),
-            "updated_at": datetime.fromisoformat(pr_data.get("updated_at", "").replace("Z", "+00:00"))
-        }
+        try:
+            pr_data = payload.get("pull_request", {})
+            
+            if not pr_data:
+                raise ValueError("Pull request data is missing or empty")
+            
+            # Map GitHub status to our enum
+            status_mapping = {
+                "open": PRStatus.OPEN,
+                "closed": PRStatus.CLOSED,
+                "merged": PRStatus.MERGED
+            }
+            
+            # Parse and validate required fields
+            title = pr_data.get("title", "")
+            if not title:
+                raise ValueError("Pull request title is missing")
+            
+            author = pr_data.get("user", {}).get("login", "")
+            if not author:
+                raise ValueError("Pull request author is missing")
+            
+            repository = payload.get("repository", {}).get("full_name", "")
+            if not repository:
+                raise ValueError("Repository information is missing")
+            
+            pr_number = pr_data.get("number")
+            if pr_number is None:
+                raise ValueError("Pull request number is missing")
+            
+            # Parse dates with error handling
+            try:
+                created_at = datetime.fromisoformat(pr_data.get("created_at", "").replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                created_at = datetime.now(timezone.utc)
+                print(f"Warning: Could not parse created_at, using current time for PR #{pr_number}")
+            
+            try:
+                updated_at = datetime.fromisoformat(pr_data.get("updated_at", "").replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                updated_at = datetime.now(timezone.utc)
+                print(f"Warning: Could not parse updated_at, using current time for PR #{pr_number}")
+            
+            return {
+                "title": title,
+                "description": pr_data.get("body", ""),
+                "status": status_mapping.get(pr_data.get("state", "open"), PRStatus.OPEN),
+                "author": author,
+                "repository": repository,
+                "pr_number": pr_number,
+                "github_id": pr_data.get("id"),
+                "html_url": pr_data.get("html_url", ""),
+                "created_at": created_at,
+                "updated_at": updated_at
+            }
+            
+        except Exception as e:
+            raise ValueError(f"Failed to parse pull request data: {str(e)}")
     
     def parse_files_data(self, files_data: List[Dict[str, Any]], pr_id: int) -> List[Dict[str, Any]]:
         """Parse files data from GitHub API response"""
@@ -68,74 +106,117 @@ class GitHubWebhookHandler:
     
     async def handle_pull_request_event(self, payload: Dict[str, Any], db: Session) -> Dict[str, Any]:
         """Handle pull request webhook event"""
-        action = payload.get("action")
-        
-        if action not in ["opened", "synchronize", "reopened", "closed"]:
-            return {"message": f"Action '{action}' not handled", "status": "ignored"}
-        
-        pr_data = self.parse_pull_request_data(payload)
-        
-        # Check if PR already exists using newer SQLAlchemy 2.0+ syntax
-        from sqlalchemy import select
-        stmt = select(PullRequest).where(
-            PullRequest.pr_number == pr_data["pr_number"],
-            PullRequest.repository == pr_data["repository"]
-        )
-        existing_pr = db.exec(stmt).first()
-        
-        if existing_pr:
-            # Update existing PR
-            for key, value in pr_data.items():
-                if hasattr(existing_pr, key) and key not in ["id", "pr_number", "repository"]:
-                    setattr(existing_pr, key, value)
-            existing_pr.updated_at = datetime.now(timezone.utc)
-            db.commit()
-            db.refresh(existing_pr)
+        try:
+            action = payload.get("action")
             
-            pr_id = existing_pr.id
-            message = f"Updated existing PR #{pr_data['pr_number']}"
-        else:
-            # Create new PR
-            new_pr = PullRequest(**pr_data)
-            db.add(new_pr)
-            db.commit()
-            db.refresh(new_pr)
+            if not action:
+                raise ValueError("Missing 'action' field in webhook payload")
             
-            pr_id = new_pr.id
-            message = f"Created new PR #{pr_data['pr_number']}"
-        
-        # Handle files if this is a synchronize event or new PR
-        if action in ["opened", "synchronize", "reopened"]:
-            # Note: In a real implementation, you would fetch files from GitHub API
-            # For now, we'll create a placeholder file entry
-            if not existing_pr or action == "synchronize":
-                # Remove existing files for this PR if synchronizing
-                if existing_pr:
-                    delete_stmt = select(File).where(File.pull_request_id == pr_id)
-                    existing_files = db.exec(delete_stmt).all()
-                    for file in existing_files:
-                        db.delete(file)
-                
-                # Create a placeholder file entry
-                placeholder_file = File(
-                    filename="files_updated",
-                    file_path="files_updated",
-                    status="modified",
-                    additions=0,
-                    deletions=0,
-                    changes=0,
-                    pull_request_id=pr_id
-                )
-                db.add(placeholder_file)
-                db.commit()
-        
-        return {
-            "message": message,
-            "pr_id": pr_id,
-            "pr_number": pr_data["pr_number"],
-            "action": action,
-            "status": "success"
-        }
+            if action not in ["opened", "synchronize", "reopened", "closed"]:
+                return {
+                    "message": f"Action '{action}' not handled",
+                    "status": "ignored",
+                    "supported_actions": ["opened", "synchronize", "reopened", "closed"],
+                    "received_action": action
+                }
+            
+            # Parse pull request data
+            try:
+                pr_data = self.parse_pull_request_data(payload)
+            except Exception as parse_error:
+                raise ValueError(f"Failed to parse pull request data: {str(parse_error)}")
+            
+            # Validate required fields
+            required_fields = ["title", "author", "repository", "pr_number"]
+            missing_fields = [field for field in required_fields if not pr_data.get(field)]
+            
+            if missing_fields:
+                raise ValueError(f"Missing required fields: {missing_fields}")
+            
+            # Check if PR already exists using newer SQLAlchemy 2.0+ syntax
+            from sqlalchemy import select
+            stmt = select(PullRequest).where(
+                PullRequest.pr_number == pr_data["pr_number"],
+                PullRequest.repository == pr_data["repository"]
+            )
+            existing_pr = db.exec(stmt).first()
+            
+            if existing_pr:
+                # Update existing PR
+                try:
+                    for key, value in pr_data.items():
+                        if hasattr(existing_pr, key) and key not in ["id", "pr_number", "repository"]:
+                            setattr(existing_pr, key, value)
+                    existing_pr.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(existing_pr)
+                    
+                    pr_id = existing_pr.id
+                    message = f"Updated existing PR #{pr_data['pr_number']}"
+                except Exception as update_error:
+                    db.rollback()
+                    raise ValueError(f"Failed to update existing PR: {str(update_error)}")
+            else:
+                # Create new PR
+                try:
+                    new_pr = PullRequest(**pr_data)
+                    db.add(new_pr)
+                    db.commit()
+                    db.refresh(new_pr)
+                    
+                    pr_id = new_pr.id
+                    message = f"Created new PR #{pr_data['pr_number']}"
+                except Exception as create_error:
+                    db.rollback()
+                    raise ValueError(f"Failed to create new PR: {str(create_error)}")
+            
+            # Handle files if this is a synchronize event or new PR
+            if action in ["opened", "synchronize", "reopened"]:
+                try:
+                    # Note: In a real implementation, you would fetch files from GitHub API
+                    # For now, we'll create a placeholder file entry
+                    if not existing_pr or action == "synchronize":
+                        # Remove existing files for this PR if synchronizing
+                        if existing_pr:
+                            delete_stmt = select(File).where(File.pull_request_id == pr_id)
+                            existing_files = db.exec(delete_stmt).all()
+                            for file in existing_files:
+                                db.delete(file)
+                        
+                        # Create a placeholder file entry
+                        placeholder_file = File(
+                            filename="files_updated",
+                            file_path="files_updated",
+                            status="modified",
+                            additions=0,
+                            deletions=0,
+                            changes=0,
+                            pull_request_id=pr_id
+                        )
+                        db.add(placeholder_file)
+                        db.commit()
+                except Exception as file_error:
+                    db.rollback()
+                    # Log the error but don't fail the entire operation
+                    print(f"Warning: Failed to handle files for PR {pr_id}: {str(file_error)}")
+            
+            return {
+                "message": message,
+                "pr_id": pr_id,
+                "pr_number": pr_data["pr_number"],
+                "action": action,
+                "status": "success",
+                "details": {
+                    "repository": pr_data["repository"],
+                    "author": pr_data["author"],
+                    "title": pr_data["title"]
+                }
+            }
+            
+        except Exception as e:
+            # Log the full error for debugging
+            print(f"Error in handle_pull_request_event: {traceback.format_exc()}")
+            raise ValueError(f"Webhook processing failed: {str(e)}")
 
 # Create global webhook handler instance
 webhook_handler = GitHubWebhookHandler(os.getenv("GITHUB_WEBHOOK_SECRET", ""))
