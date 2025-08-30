@@ -107,7 +107,7 @@ async def get_pull_requests(db: Session = Depends(get_db)):
     try:
         from sqlalchemy import select
         stmt = select(PullRequest)
-        result = db.exec(stmt).all()
+        result = db.execute(stmt).scalars().all()
         return result
     except Exception as e:
         error_msg = f"Failed to fetch pull requests: {str(e)}"
@@ -138,7 +138,7 @@ async def get_pull_request(pr_id: int, db: Session = Depends(get_db)):
         
         from sqlalchemy import select
         stmt = select(PullRequest).where(PullRequest.id == pr_id)
-        pr = db.exec(stmt).first()
+        pr = db.execute(stmt).scalar_one_or_none()
         
         if not pr:
             raise HTTPException(
@@ -194,7 +194,7 @@ async def create_pull_request(pr: PullRequest, db: Session = Depends(get_db)):
             PullRequest.pr_number == pr.pr_number,
             PullRequest.repository == pr.repository
         )
-        existing_pr = db.exec(existing_stmt).first()
+        existing_pr = db.execute(existing_stmt).scalar_one_or_none()
         
         if existing_pr:
             raise HTTPException(
@@ -245,7 +245,7 @@ async def get_pr_files(pr_id: int, db: Session = Depends(get_db)):
         # First check if PR exists
         from sqlalchemy import select
         pr_stmt = select(PullRequest).where(PullRequest.id == pr_id)
-        pr = db.exec(pr_stmt).first()
+        pr = db.execute(pr_stmt).scalar_one_or_none()
         
         if not pr:
             raise HTTPException(
@@ -259,7 +259,7 @@ async def get_pr_files(pr_id: int, db: Session = Depends(get_db)):
         
         # Get files for the PR
         files_stmt = select(File).where(File.pull_request_id == pr_id)
-        files = db.exec(files_stmt).all()
+        files = db.execute(files_stmt).scalars().all()
         return files
         
     except HTTPException:

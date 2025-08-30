@@ -73,6 +73,43 @@ class GitHubWebhookHandler:
                 updated_at = datetime.now(timezone.utc)
                 print(f"Warning: Could not parse updated_at, using current time for PR #{pr_number}")
             
+            # Parse optional dates
+            closed_at = None
+            merged_at = None
+            
+            if pr_data.get("closed_at"):
+                try:
+                    closed_at = datetime.fromisoformat(pr_data.get("closed_at", "").replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    print(f"Warning: Could not parse closed_at for PR #{pr_number}")
+            
+            if pr_data.get("merged_at"):
+                try:
+                    merged_at = datetime.fromisoformat(pr_data.get("merged_at", "").replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    print(f"Warning: Could not parse merged_at for PR #{pr_number}")
+            
+            # Extract branch information
+            head = pr_data.get("head", {})
+            base = pr_data.get("base", {})
+            
+            branch_name = head.get("ref", "")
+            base_branch = base.get("ref", "")
+            commit_sha = head.get("sha", "")
+            base_commit_sha = base.get("sha", "")
+            
+            # Extract code diff statistics
+            additions = pr_data.get("additions", 0)
+            deletions = pr_data.get("deletions", 0)
+            changed_files = pr_data.get("changed_files", 0)
+            commits_count = pr_data.get("commits", 0)
+            
+            # Extract GitHub specific fields
+            draft = pr_data.get("draft", False)
+            mergeable = pr_data.get("mergeable")
+            rebaseable = pr_data.get("rebaseable")
+            mergeable_state = pr_data.get("mergeable_state")
+            
             return {
                 "title": title,
                 "description": pr_data.get("body", ""),
@@ -82,8 +119,30 @@ class GitHubWebhookHandler:
                 "pr_number": pr_number,
                 "github_id": pr_data.get("id"),
                 "html_url": pr_data.get("html_url", ""),
+                
+                # Enhanced metadata
+                "branch_name": branch_name,
+                "base_branch": base_branch,
+                "commit_sha": commit_sha,
+                "base_commit_sha": base_commit_sha,
+                
+                # Code diff statistics
+                "additions": additions,
+                "deletions": deletions,
+                "changed_files": changed_files,
+                "commits_count": commits_count,
+                
+                # GitHub specific fields
+                "draft": draft,
+                "mergeable": mergeable,
+                "rebaseable": rebaseable,
+                "mergeable_state": mergeable_state,
+                
+                # Timestamps
                 "created_at": created_at,
-                "updated_at": updated_at
+                "updated_at": updated_at,
+                "closed_at": closed_at,
+                "merged_at": merged_at
             }
             
         except Exception as e:
@@ -93,13 +152,28 @@ class GitHubWebhookHandler:
         """Parse files data from GitHub API response"""
         files = []
         for file_data in files_data:
+            # Extract file extension
+            filename = file_data.get("filename", "")
+            file_extension = ""
+            if filename and "." in filename:
+                file_extension = filename.split(".")[-1]
+            
             files.append({
-                "filename": file_data.get("filename", ""),
+                "filename": filename,
                 "file_path": file_data.get("filename", ""),
                 "status": file_data.get("status", "modified"),
                 "additions": file_data.get("additions", 0),
                 "deletions": file_data.get("deletions", 0),
                 "changes": file_data.get("changes", 0),
+                
+                # Enhanced file metadata
+                "sha": file_data.get("sha"),
+                "blob_url": file_data.get("blob_url"),
+                "raw_url": file_data.get("raw_url"),
+                "contents_url": file_data.get("contents_url"),
+                "file_size": file_data.get("size"),
+                "file_extension": file_extension,
+                
                 "pull_request_id": pr_id
             })
         return files
@@ -133,13 +207,13 @@ class GitHubWebhookHandler:
             if missing_fields:
                 raise ValueError(f"Missing required fields: {missing_fields}")
             
-            # Check if PR already exists using newer SQLAlchemy 2.0+ syntax
+            # Check if PR already exists using correct SQLAlchemy 2.0+ syntax
             from sqlalchemy import select
             stmt = select(PullRequest).where(
                 PullRequest.pr_number == pr_data["pr_number"],
                 PullRequest.repository == pr_data["repository"]
             )
-            existing_pr = db.exec(stmt).first()
+            existing_pr = db.execute(stmt).scalar_one_or_none()
             
             if existing_pr:
                 # Update existing PR
@@ -179,7 +253,7 @@ class GitHubWebhookHandler:
                         # Remove existing files for this PR if synchronizing
                         if existing_pr:
                             delete_stmt = select(File).where(File.pull_request_id == pr_id)
-                            existing_files = db.exec(delete_stmt).all()
+                            existing_files = db.execute(delete_stmt).scalars().all()
                             for file in existing_files:
                                 db.delete(file)
                         
