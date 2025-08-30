@@ -22,6 +22,46 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "ok", "message": "Service is healthy"}
 
+@app.get("/db-test")
+async def database_connection_test(db: Session = Depends(get_db)):
+    """Test database connection and basic operations"""
+    try:
+        # Test 1: Basic connection
+        db.execute("SELECT 1")
+        
+        # Test 2: Check if tables exist
+        result = db.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
+        table_count = result.scalar()
+        
+        # Test 3: Check if our specific tables exist
+        pr_table_exists = db.execute("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'pull_requests')").scalar()
+        files_table_exists = db.execute("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'files')").scalar()
+        
+        # Test 4: Try to count records (should work even if tables are empty)
+        pr_count = db.execute("SELECT COUNT(*) FROM pull_requests").scalar() if pr_table_exists else 0
+        files_count = db.execute("SELECT COUNT(*) FROM files").scalar() if files_table_exists else 0
+        
+        return {
+            "status": "success",
+            "message": "Database connection test passed",
+            "details": {
+                "connection": "OK",
+                "total_tables": table_count,
+                "pull_requests_table": pr_table_exists,
+                "files_table": files_table_exists,
+                "pull_requests_count": pr_count,
+                "files_count": files_count
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": "Database connection test failed",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
 @app.get("/hello")
 async def hello_world():
     """Hello world endpoint"""
@@ -30,7 +70,7 @@ async def hello_world():
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "Welcome to PR Review AI Agent", "endpoints": ["/health", "/hello", "/prs", "/prs/{pr_id}"]}
+    return {"message": "Welcome to PR Review AI Agent", "endpoints": ["/health", "/db-test", "/hello", "/prs", "/prs/{pr_id}"]}
 
 # Database endpoints
 @app.get("/prs", response_model=List[PullRequest])
